@@ -6,3 +6,5 @@
 /.pkg
 /deployment-scripts
 /deploy.sh
+/.responses
+
