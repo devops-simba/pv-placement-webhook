@@ -14,13 +14,13 @@ import (
 )
 
 type PvPlacementValidationWebhook struct {
-	verifyPvInSystemNamespaces    bool
+	validateInSystemNamespaces    bool
 	storageClassNameToZoneMapping map[string]string
 }
 
 func NewPvPlacementValidator() *PvPlacementValidationWebhook {
 	return &PvPlacementValidationWebhook{
-		verifyPvInSystemNamespaces:    toBool(helpers.ReadEnv(mutateInSystemNS_Env, "no")),
+		validateInSystemNamespaces:    toBool(helpers.ReadEnv(mutateInSystemNS_Env, "no")),
 		storageClassNameToZoneMapping: loadStorageClassNameToZoneMapping(),
 	}
 }
@@ -77,7 +77,7 @@ func (this *PvPlacementValidationWebhook) HandleAdmission(
 	}
 
 	// Check if PV is in a system NS?
-	if !this.verifyPvInSystemNamespaces &&
+	if !this.validateInSystemNamespaces &&
 		webhookCore.IsObjectInNamespaces(&pv.ObjectMeta, webhookCore.IgnoredNamespaces) {
 		log.Infof("PV is in a system namespace. Ignoring modification")
 		return noChangeResponse, nil
@@ -85,6 +85,7 @@ func (this *PvPlacementValidationWebhook) HandleAdmission(
 
 	// All PVs must have a storageClassName(or our mutating must already added it)
 	if pv.Spec.StorageClassName == "" {
+		log.Errorf("PV have no StorageClassName, rejecting PV creation")
 		return nil, helpers.StringError("Using default storageClass is not allowed, please select an specific storageClass for the PV")
 	}
 

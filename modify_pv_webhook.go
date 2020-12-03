@@ -94,10 +94,12 @@ func (this *PvPlacementModificationWebhook) HandleAdmission(
 
 	// If object missing a storageClass, we lookup its namespace and try to guess storageClassName
 	if pv.Spec.StorageClassName == "" {
+		log.V(10).Infof("PV have no storageClassName, trying to read it from the namespace(%s)", pv.Spec.ClaimRef.Namespace)
 		namespace, err := webhookCore.GetNamespace(pv.Spec.ClaimRef.Namespace, metav1.GetOptions{})
 		if err != nil {
 			log.Warningf("Failed to read namespace of the PV: %v", err)
 		} else {
+			fixedFromNs := false
 			if nodeSelector, ok := namespace.Annotations["openshift.io/node-selector"]; ok && nodeSelector != "" {
 				specs := strings.Split(nodeSelector, ",")
 				for _, spec := range specs {
@@ -108,13 +110,20 @@ func (this *PvPlacementModificationWebhook) HandleAdmission(
 
 					if len(keyValue) == 2 {
 						if keyValue[0] == ZoneKey && keyValue[1] != "" {
+							log.V(10).Infof("Preferred zone of namespace(%s) is %s", pv.Spec.ClaimRef.Namespace, keyValue[1])
 							if preferredStorageClassName, ok := this.zoneToPreferedStorageClassNameMapping[keyValue[1]]; ok {
+								log.V(10).Infof("StorageClassName for zone(%s) is %s", keyValue[1], preferredStorageClassName)
+								fixedFromNs = true
 								storageClassName = preferredStorageClassName
 								patches = append(patches, webhookCore.NewAddPatch("/spec/storageClassName", storageClassName))
 							}
+							break
 						}
 					}
 				}
+			}
+			if !fixedFromNs {
+				return noChangeResponse, nil // this will be rejected by validator
 			}
 		}
 	}
