@@ -129,12 +129,26 @@ func (this *PvPlacementModificationWebhook) HandleAdmission(
 	// if we have a zone for this storageClass and user does not provide any zone mapping, we set it on PV
 	if mappedZone, ok := this.storageClassNameToZoneMapping[storageClassName]; zoneKey == "" && ok {
 		// we have a mapping for this storage class
-		patches = append(patches,
-			webhookCore.NewAddPatch("/spec/nodeAffinity/required/nodeSelectorTerms/0", corev1.NodeSelectorRequirement{
-				Key:      ZoneKey,
-				Operator: corev1.NodeSelectorOpIn,
-				Values:   []string{mappedZone},
-			}))
+		terms := []corev1.NodeSelectorTerm{}
+		zoneTerm := corev1.NodeSelectorTerm{
+			MatchExpressions: []corev1.NodeSelectorRequirement{
+				corev1.NodeSelectorRequirement{
+					Key:      ZoneKey,
+					Operator: corev1.NodeSelectorOpIn,
+					Values:   []string{mappedZone},
+				},
+			},
+		}
+		if pv.Spec.NodeAffinity != nil && pv.Spec.NodeAffinity.Required != nil {
+			terms = append(terms, pv.Spec.NodeAffinity.Required.NodeSelectorTerms...)
+			terms = append(terms, zoneTerm)
+			patches = append(patches,
+				webhookCore.NewReplacePatch("/spec/nodeAffinity/required/nodeSelectorTerms", terms))
+		} else {
+			terms = append(terms, zoneTerm)
+			patches = append(patches,
+				webhookCore.NewAddPatch("/spec/nodeAffinity/required/nodeSelectorTerms", terms))
+		}
 	}
 
 	if len(patches) != 0 {
