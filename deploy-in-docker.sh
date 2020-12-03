@@ -63,7 +63,6 @@ read_option() {
             echo -n "${promptColor}${title}${nc}(${defValColor}${defval}${nc}): "
             read RESULT
             RESULT="${RESULT:-${prevValue:-$defaultValue}}"
-            echo "${#RESULT}"
             if [ -n "$maxLen" ]; then
                 if [ ${#RESULT} -gt $maxLen ]; then
                     echo "${red}Maximum allowed length for this variable is ${maxLen}${nc}"
