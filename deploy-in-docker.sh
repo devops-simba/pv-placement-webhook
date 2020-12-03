@@ -46,7 +46,8 @@ read_option() {
     title="$2"
     defaultValue="$3"
     prevValue="$4"
-    resultVar="$5"
+    maxLen="$5"
+    resultVar="$6"
     resultVar="${resultVar:-${title}}"
 
     defval="${prevValue:-${defaultValue}}"
@@ -55,14 +56,25 @@ read_option() {
         return 0
     fi
 
+    LengthIsOK=0
     if [ -n "$defval" ]; then
         echo "${descColor}${desc}${nc}"
-        echo -n "${promptColor}${title}${nc}(${defValColor}${defval}${nc}): "
-        read RESULT
-        RESULT="${RESULT:-${prevValue:-$defaultValue}}"
-        if [ "$RESULT" = "$defaultValue" ]; then
-            RESULT=""
-        fi
+        while [ $LengthIsOK -eq 0 ]; do
+            echo -n "${promptColor}${title}${nc}(${defValColor}${defval}${nc}): "
+            read RESULT
+            RESULT="${RESULT:-${prevValue:-$defaultValue}}"
+            echo "${#RESULT}"
+            if [ -n "$maxLen" ]; then
+                if [ ${#RESULT} -gt $maxLen ]; then
+                    echo "${red}Maximum allowed length for this variable is ${maxLen}${nc}"
+                    continue
+                fi
+            fi
+            if [ "$RESULT" = "$defaultValue" ]; then
+                RESULT=""
+            fi
+            LengthIsOK=1
+        done
     else
         # this option have no previous value nor any default value, so it is required
         echo "${descColor}${desc}${nc}."
@@ -70,6 +82,10 @@ read_option() {
         while [ -z "$RESULT" ]; do
             echo -n "${requiredColor}${title}${nc}: "
             read RESULT
+            if [ \( -n $maxLen \) -a \(  ${#RESULT} -gt $maxLen \) ]; then
+                echo "${red}Maximum allowed length for this variable is ${maxLen}${nc}"
+                RESULT=""
+            fi
         done
     fi
     set_var "$resultVar" "$RESULT"
@@ -83,7 +99,7 @@ if [ -f "./.responses" ]; then
     . ./.responses
 fi
 
-read_option "Name of the application" "ApplicationName" "$DefaultApplicationName" "$ApplicationName"
+read_option "Name of the application" "ApplicationName" "$DefaultApplicationName" "$ApplicationName" 11
 if [ -n "$ApplicationName" ]; then
     args="$args --app '$ApplicationName'"
 fi
@@ -127,22 +143,26 @@ if [ -n "$ImageTag" ]; then
     args="$args --tag '$ImageTag'"
 fi
 
-read_option "Registry that image should pushed to it. You must already be logged into this repository" "ImageRegistry" "DEFAULT" "$ImageRegistry"
-if [ -n "$ImageRegistry" ]; then
-    args="$args --registry '$ImageRegistry'"
+read_option "Namespace that webhook should deployed to it" "WebhookNamespace" "$DefaultNamespace" "$WebhookNamespace" 15
+if [ -n "$WebhookNamespace" ]; then
+    args="$args --namespace '$WebhookNamespace'"
 fi
+
+SelectedNs="${WebhookNamespace:-$DefaultNamespace}"
+DefaultPushRegistry="registry.apps.internal.ic.cloud.snapp.ir/$SelectedNs"
+read_option "Registry that image should pushed to it. You must already be logged into this repository" "PushImageRegistry" "$DefaultPushRegistry" "$PushImageRegistry"
+args="$args --push-registry '${PushImageRegistry:-$DefaultPushRegistry}'"
+
+DefaultPullRegistry="image-registry.openshift-image-registry.svc:5000/$SelectedNs"
+read_option "Registry that image should pulled from it." "PullImageRegistry" "$DefaultPullRegistry" "$PullImageRegistry"
+args="$args --pull-registry '${PullImageRegistry:-$DefaultPullRegistry}'"
 
 read_option "If you want to run the image as a non-root user, you must specify its user ID here" "RunAsUser" "1234" "$RunAsUser"
 if [ -n "$RunAsUser" ]; then
     args="$args --runas '$RunAsUser'"
 fi
 
-read_option "Namespace that webhook should deployed to it" "WebhookNamespace" "$DefaultNamespace" "$WebhookNamespace"
-if [ -n "$WebhookNamespace" ]; then
-    args="$args --namespace '$WebhookNamespace'"
-fi
-
-read_option "Name of the service of this webhook" "ServiceName" "$ApplicationName" "$ServiceName"
+read_option "Name of the service of this webhook" "ServiceName" "$ApplicationName" "$ServiceName" 15
 if [ -n "$ServiceName" ]; then
     args="$args --service-name '$ServiceName'"
 fi
@@ -152,7 +172,7 @@ if [ -n "$ServiceUser" ]; then
     args="$args --service-user '$ServiceUser'"
 fi
 
-read_option "Name of the secret that contains TLS certificate and key for this webhook" "SecretName" "$ApplicationName" "$SecretName"
+read_option "Name of the secret that contains TLS certificate and key for this webhook" "SecretName" "$ApplicationName" "$SecretName" 15
 if [ -n "$SecretName" ]; then
     args="$args --secret-name '$SecretName'"
 fi
@@ -185,7 +205,8 @@ echo "CAFile='$CAFile'" >> ./.responses
 echo "SecretName='$SecretName'" >> ./.responses
 echo "ImageName='$ImageName'" >> ./.responses
 echo "ImageTag='$ImageTag'" >> ./.responses
-echo "ImageRegistry='$ImageRegistry'" >> ./.responses
+echo "PushImageRegistry='$PushImageRegistry'" >> ./.responses
+echo "PullImageRegistry='$PullImageRegistry'" >> ./.responses
 echo "RunAsUser='$RunAsUser'" >> ./.responses
 echo "WebhookNamespace='$WebhookNamespace'" >> ./.responses
 echo "ServiceName='$ServiceName'" >> ./.responses

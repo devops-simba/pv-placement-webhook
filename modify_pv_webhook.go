@@ -139,12 +139,32 @@ func (this *PvPlacementModificationWebhook) HandleAdmission(
 				},
 			},
 		}
-		if pv.Spec.NodeAffinity != nil && pv.Spec.NodeAffinity.Required != nil {
+
+		if pv.Spec.NodeAffinity == nil {
+			log.V(10).Info("nodeAffinity is nil")
+			nodeAffinity := corev1.VolumeNodeAffinity{
+				Required: &corev1.NodeSelector{
+					NodeSelectorTerms: []corev1.NodeSelectorTerm{zoneTerm},
+				},
+			}
+			patches = append(patches,
+				webhookCore.NewAddPatch("/spec/nodeAffinity", nodeAffinity))
+		} else if pv.Spec.NodeAffinity.Required == nil {
+			log.V(10).Info("nodeAffinity.required is nil")
+			required := &corev1.NodeSelector{
+				NodeSelectorTerms: []corev1.NodeSelectorTerm{zoneTerm},
+			}
+
+			patches = append(patches,
+				webhookCore.NewAddPatch("/spec/nodeAffinity/required", required))
+		} else if len(pv.Spec.NodeAffinity.Required.NodeSelectorTerms) != 0 {
+			log.V(10).Infof("old value of nodeAffinity.required.nodeSelectorTerm: %#v", pv.Spec.NodeAffinity.Required.NodeSelectorTerms)
 			terms = append(terms, pv.Spec.NodeAffinity.Required.NodeSelectorTerms...)
 			terms = append(terms, zoneTerm)
 			patches = append(patches,
 				webhookCore.NewReplacePatch("/spec/nodeAffinity/required/nodeSelectorTerms", terms))
 		} else {
+			log.V(10).Info("nodeAffinity.required.nodeSelectorTerms is nil")
 			terms = append(terms, zoneTerm)
 			patches = append(patches,
 				webhookCore.NewAddPatch("/spec/nodeAffinity/required/nodeSelectorTerms", terms))
