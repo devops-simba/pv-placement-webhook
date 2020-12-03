@@ -5,8 +5,12 @@ import (
 	"strings"
 
 	"github.com/devops-simba/helpers"
+	webhookCore "github.com/devops-simba/webhook_core"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	log "github.com/golang/glog"
 )
 
 func toBool(value string) bool {
@@ -29,6 +33,30 @@ func loadZoneToPreferredStorageClassNameMapping() (zoneToPreferredStorageClassNa
 	return
 }
 
+func getNamespacePreferredZone(ns string) (string, error) {
+	namespace, err := webhookCore.GetNamespace(ns, metav1.GetOptions{})
+	if err != nil {
+		return "", err
+	}
+
+	if nodeSelector, ok := namespace.Annotations["openshift.io/node-selector"]; ok && nodeSelector != "" {
+		specs := strings.Split(nodeSelector, ",")
+		for _, spec := range specs {
+			keyValue := strings.Split(spec, "=")
+			if len(keyValue) == 1 {
+				keyValue = strings.Split(spec, ":")
+			}
+
+			if len(keyValue) == 2 {
+				if keyValue[0] == ZoneKey && keyValue[1] != "" {
+					log.V(10).Infof("Preferred zone of namespace(%s) is %s", ns, keyValue[1])
+					return keyValue[1], nil
+				}
+			}
+		}
+	}
+	return "", nil
+}
 func findZoneAffinity(pv *corev1.PersistentVolume) (string, error) {
 	if pv.Spec.NodeAffinity == nil {
 		return "", nil

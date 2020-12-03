@@ -3,26 +3,26 @@ package main
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
 
 	"github.com/devops-simba/helpers"
 	webhookCore "github.com/devops-simba/webhook_core"
 	admissionApi "k8s.io/api/admission/v1"
 	admissionRegistration "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	log "github.com/golang/glog"
 )
 
 type PvPlacementModificationWebhook struct {
 	mutatePvInSystemNamespaces            bool
+	defaultStorageClassName               string
 	storageClassNameToZoneMapping         map[string]string
 	zoneToPreferedStorageClassNameMapping map[string]string
 }
 
 func NewPvPlacementModifier() *PvPlacementModificationWebhook {
 	return &PvPlacementModificationWebhook{
+		defaultStorageClassName:               helpers.ReadEnv(defaultStorageClassName_ENV, defaultDefaultStorageClassName),
 		mutatePvInSystemNamespaces:            toBool(helpers.ReadEnv(mutateInSystemNS_Env, "no")),
 		storageClassNameToZoneMapping:         loadStorageClassNameToZoneMapping(),
 		zoneToPreferedStorageClassNameMapping: loadZoneToPreferredStorageClassNameMapping(),
@@ -53,6 +53,8 @@ func (this *PvPlacementModificationWebhook) Rules() []admissionRegistration.Rule
 }
 func (this *PvPlacementModificationWebhook) Configurations() []webhookCore.WebhookConfiguration {
 	return []webhookCore.WebhookConfiguration{
+		webhookCore.CreateConfig(defaultStorageClassName_ENV, defaultDefaultStorageClassName,
+			"Default storage class of the system"),
 		webhookCore.CreateConfig(mutateInSystemNS_Env, "false",
 			"Should we modify PVs that defined in system namespaces?"),
 		webhookCore.CreateConfig(storageClassNameToZoneMapping_Env, defaultStorageClassNameToZoneMapping,
@@ -93,38 +95,26 @@ func (this *PvPlacementModificationWebhook) HandleAdmission(
 	storageClassName := pv.Spec.StorageClassName
 
 	// If object missing a storageClass, we lookup its namespace and try to guess storageClassName
-	if pv.Spec.StorageClassName == "" {
-		log.V(10).Infof("PV have no storageClassName, trying to read it from the namespace(%s)", pv.Spec.ClaimRef.Namespace)
-		namespace, err := webhookCore.GetNamespace(pv.Spec.ClaimRef.Namespace, metav1.GetOptions{})
+	if storageClassName == "" || storageClassName == this.defaultStorageClassName {
+		log.V(10).Infof("PV have no storageClassName or its storageClassName is default, trying to read Zone from the namespace(%s)", pv.Spec.ClaimRef.Namespace)
+		namespacePreferredZone, err := getNamespacePreferredZone(pv.Spec.ClaimRef.Namespace)
 		if err != nil {
 			log.Warningf("Failed to read namespace of the PV: %v", err)
-		} else {
-			fixedFromNs := false
-			if nodeSelector, ok := namespace.Annotations["openshift.io/node-selector"]; ok && nodeSelector != "" {
-				specs := strings.Split(nodeSelector, ",")
-				for _, spec := range specs {
-					keyValue := strings.Split(spec, "=")
-					if len(keyValue) == 1 {
-						keyValue = strings.Split(spec, ":")
-					}
-
-					if len(keyValue) == 2 {
-						if keyValue[0] == ZoneKey && keyValue[1] != "" {
-							log.V(10).Infof("Preferred zone of namespace(%s) is %s", pv.Spec.ClaimRef.Namespace, keyValue[1])
-							if preferredStorageClassName, ok := this.zoneToPreferedStorageClassNameMapping[keyValue[1]]; ok {
-								log.V(10).Infof("StorageClassName for zone(%s) is %s", keyValue[1], preferredStorageClassName)
-								fixedFromNs = true
-								storageClassName = preferredStorageClassName
-								patches = append(patches, webhookCore.NewAddPatch("/spec/storageClassName", storageClassName))
-							}
-							break
-						}
-					}
+		} else if namespacePreferredZone != "" {
+			if preferredStorageClassName, ok := this.zoneToPreferedStorageClassNameMapping[namespacePreferredZone]; ok {
+				log.V(10).Infof("Default StorageClassName for zone(%s) is %s", namespacePreferredZone, preferredStorageClassName)
+				storageClassName = preferredStorageClassName
+				if storageClassName == "" {
+					patches = append(patches, webhookCore.NewAddPatch("/spec/storageClassName", storageClassName))
+				} else {
+					patches = append(patches, webhookCore.NewReplacePatch("/spec/storageClassName", storageClassName))
 				}
+			} else {
+				log.Errorf("There is no preferred storageClassName for zone %s", namespacePreferredZone)
 			}
-			if !fixedFromNs {
-				return noChangeResponse, nil // this will be rejected by validator
-			}
+		}
+		if storageClassName == "" {
+			return noChangeResponse, nil // this must rejected by validator
 		}
 	}
 
